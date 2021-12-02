@@ -28,7 +28,7 @@ entrypoint!(process_instruction);
 pub fn process_instruction(
     program_id: &Pubkey, // Public key of the account the hello world program was loaded into
     accounts: &[AccountInfo], // The account to say hello to
-    instruction_data: &[u8], // Ignored, all helloworld instructions are hellos
+    _instruction_data: &[u8], // Ignored, all helloworld instructions are hellos
 ) -> ProgramResult {
     msg!("Hello World Rust program entrypoint");
 
@@ -43,6 +43,12 @@ pub fn process_instruction(
 
 
     // Invoke the system program to allocate account data
+    let (_authority_pubkey, nonce) =
+        Pubkey::find_program_address(&[program_id.as_ref()], &program_id);
+
+    let swap_bytes = program_id.to_bytes();
+    let authority_signature_seeds = [&swap_bytes[..32], &[nonce]];
+    let signers = &[&authority_signature_seeds[..]];
     invoke_signed(
         &system_instruction::allocate(allocated_info.key, SIZE as u64),
         // Order doesn't matter and this slice could include all the accounts and be:
@@ -51,7 +57,7 @@ pub fn process_instruction(
             account.clone(), // program being invoked also needs to be included
             allocated_info.clone(),
         ],
-        &[&[b"You pass butter", &[instruction_data[0]]]],
+        signers,
     )?;
 
     // The account must be owned by the program in order to modify its data
