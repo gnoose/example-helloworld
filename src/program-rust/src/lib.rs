@@ -8,6 +8,12 @@ use solana_program::{
     program_error::ProgramError,
     pubkey::Pubkey,
     system_instruction,
+    config::program,     
+    program_pack::{IsInitialized, Pack},
+};
+use spl_token::{
+    instruction::AuthorityType,
+    state::{Account, Mint},
 };
 use std::convert::TryInto;
 
@@ -91,6 +97,55 @@ pub fn process_transfer(
     amount: u64,
     program_id: &Pubkey,
 ) -> ProgramResult {
+    // Iterating accounts is safer then indexing
+    let accounts_iter = &mut accounts.iter();
+
+    // Get the account for token program
+    let token_program_account = next_account_info(accounts_iter)?;
+
+    // Get the account for source account
+    let source_account = next_account_info(accounts_iter)?;
+
+    let source_account_info = unpack_token_account(source_account, &program_id)?;
+    if source_account_info.amount <= amount {
+        return Err(ProgramError::InsufficientFunds);
+    }
+
+
+    // Get the account for destination account
+    let destination_account = next_account_info(accounts_iter)?;
+
+    // Get the account for authority account
+    let authority_account = next_account_info(accounts_iter)?;
+
+    // Get the account for signer account
+    let signer_account = next_account_info(accounts_iter)?;
+
+    if !signer_account.is_signer {
+        return Err(ProgramError::MissingRequiredSignature);
+    }
+
+
+    let program_bytes = program_id.to_bytes();
+    let authority_signature_seeds = [&program_bytes[..32], &[0]]; //&[nonce]];
+    let signers = &[&authority_signature_seeds[..]];
+
+    let ix = spl_token::instruction::transfer(
+        token_program_account.key,
+        source_account.key,
+        destination_account.key,
+        authority_account.key,
+        &[signer_account.key],
+        amount,
+    )?;
+
+    invoke_signed(
+        &ix,
+        &[source_account.clone(), destination_account.clone(), authority_account.clone(), token_program_account.clone()],
+        signers,
+    )?;
+
+    
     Ok(())
 }
 
@@ -117,7 +172,7 @@ pub fn process_example(
 
     // Increment and store the number of times the account has been greeted
     let mut greeting_account = GreetingAccount::try_from_slice(&account.data.borrow())?;
-    greeting_account.counter += 1;
+    greeting_account.counter = amount as u32;
     greeting_account.serialize(&mut &mut account.data.borrow_mut()[..])?;
 
     msg!("Greeted {} time(s)!", greeting_account.counter);
@@ -173,6 +228,19 @@ pub fn process_cpi(
     Ok(())
 }
 
+
+/// Unpacks a spl_token `Account`.
+pub fn unpack_token_account(
+    account_info: &AccountInfo,
+    token_program_id: &Pubkey,
+) -> Result<Account, ProgramError> {
+    if account_info.owner != token_program_id {
+        Err(ProgramError::IncorrectProgramId.into())
+    } else {
+        spl_token::state::Account::unpack(&account_info.data.borrow())
+            .map_err(|_| ProgramError::InvalidArgument.into())
+    }
+}
 // Sanity tests
 #[cfg(test)]
 mod test {
